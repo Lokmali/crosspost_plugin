@@ -162,7 +162,7 @@ async function basicExample() {
 }
 
 // Run the example
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url.startsWith('file:') && process.argv[1] && import.meta.url.includes(process.argv[1].replace(/\\/g, '/'))) {
   basicExample().catch(console.error);
 }
 

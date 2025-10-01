@@ -116,7 +116,15 @@ export const pluginConfig = {
     'network-access',
     'storage-access',
     'user-authentication'
-  ]
+  ],
+
+  // Default Settings
+  defaultSettings: {
+    autoOptimizeContent: true,
+    enableAnalytics: true,
+    maxRetries: 3,
+    timeout: 30000
+  }
 };
 
 export default pluginConfig;
