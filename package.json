@@ -1,0 +1,48 @@
+{
+  "name": "crosspost-plugin",
+  "version": "1.0.0",
+  "description": "A plugin to replace the crosspost SDK with enhanced functionality for cross-platform social media posting",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "dev": "node --watch index.js",
+    "build": "node build.js"
+  },
+  "keywords": [
+    "crosspost",
+    "social-media",
+    "plugin",
+    "twitter",
+    "linkedin",
+    "facebook",
+    "instagram",
+    "posting"
+  ],
+  "author": "Crosspost Plugin Developer",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "oauth": "^0.10.0",
+    "crypto": "^1.0.1",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "node:test": "^20.0.0",
+    "node:assert": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/crosspost-plugin"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/crosspost-plugin/issues"
+  },
+  "homepage": "https://github.com/your-org/crosspost-plugin#readme",
+  "peerDependencies": {
+    "every-plugin": "^1.0.0"
+  }
+}
