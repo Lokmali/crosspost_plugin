@@ -4,13 +4,19 @@
  */
 
 import crypto from 'crypto';
+import axios from 'axios';
+import fs from 'fs/promises';
+import path from 'path';
 
 export class AuthManager {
   constructor(config) {
     this.config = config;
     this.tokens = new Map();
     this.refreshTokens = new Map();
+    this.tokenExpiry = new Map();
+    this.codeVerifiers = new Map(); // For PKCE
     this.isInitialized = false;
+    this.storageDir = config.storageDir || '.crosspost-tokens';
   }
 
   async initialize() {
@@ -82,7 +88,10 @@ export class AuthManager {
     } else {
       // Generate authorization URL
       const state = crypto.randomBytes(16).toString('hex');
-      const codeChallenge = this.generateCodeChallenge();
+      const { codeChallenge, codeVerifier } = this.generateCodeChallenge();
+      
+      // Store code verifier for later use
+      this.codeVerifiers.set(state, codeVerifier);
       
       const authUrl = this.buildAuthUrl('twitter', {
         clientId,
@@ -95,6 +104,7 @@ export class AuthManager {
         success: false,
         authUrl,
         state,
+        codeVerifier, // Include for debugging/testing
         message: 'Visit the auth URL to complete authentication'
       };
     }
@@ -294,21 +304,69 @@ export class AuthManager {
       mastodon: `${params.instance}/oauth/token`
     };
 
-    const payload = {
-      grant_type: 'authorization_code',
-      client_id: params.clientId,
-      client_secret: params.clientSecret,
-      code: params.code,
-      redirect_uri: params.redirectUri
-    };
+    const url = tokenUrls[platform];
+    if (!url) {
+      throw new Error(`Unsupported platform: ${platform}`);
+    }
 
-    // Mock response for demonstration
-    return {
-      access_token: `mock_token_${platform}_${Date.now()}`,
-      token_type: 'Bearer',
-      expires_in: 3600,
-      refresh_token: platform !== 'facebook' ? `refresh_${platform}_${Date.now()}` : undefined
-    };
+    try {
+      let requestData;
+      let headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json'
+      };
+
+      if (platform === 'twitter') {
+        // Twitter uses PKCE and basic auth
+        const codeVerifier = this.codeVerifiers.get(params.state) || this.generateCodeVerifier();
+        
+        requestData = new URLSearchParams({
+          grant_type: 'authorization_code',
+          client_id: params.clientId,
+          code: params.code,
+          redirect_uri: params.redirectUri,
+          code_verifier: codeVerifier
+        });
+
+        headers['Authorization'] = `Basic ${Buffer.from(`${params.clientId}:${params.clientSecret}`).toString('base64')}`;
+      } else if (platform === 'linkedin') {
+        requestData = new URLSearchParams({
+          grant_type: 'authorization_code',
+          client_id: params.clientId,
+          client_secret: params.clientSecret,
+          code: params.code,
+          redirect_uri: params.redirectUri
+        });
+      } else if (platform === 'facebook') {
+        requestData = new URLSearchParams({
+          client_id: params.clientId,
+          client_secret: params.clientSecret,
+          code: params.code,
+          redirect_uri: params.redirectUri
+        });
+      } else if (platform === 'mastodon') {
+        requestData = new URLSearchParams({
+          grant_type: 'authorization_code',
+          client_id: params.clientId,
+          client_secret: params.clientSecret,
+          code: params.code,
+          redirect_uri: params.redirectUri
+        });
+      }
+
+      const response = await axios.post(url, requestData, { headers });
+      
+      // Store token expiry
+      if (response.data.expires_in) {
+        const expiryTime = Date.now() + (response.data.expires_in * 1000);
+        this.tokenExpiry.set(platform, expiryTime);
+      }
+
+      return response.data;
+    } catch (error) {
+      console.error(`Token exchange failed for ${platform}:`, error.response?.data || error.message);
+      throw new Error(`Failed to exchange code for token: ${error.response?.data?.error_description || error.message}`);
+    }
   }
 
   /**
@@ -320,18 +378,98 @@ export class AuthManager {
       throw new Error(`No refresh token available for ${platform}`);
     }
 
-    // Implementation would make actual API call to refresh token
-    const newToken = `refreshed_token_${platform}_${Date.now()}`;
-    this.tokens.set(platform, newToken);
-    await this.saveTokens();
+    const tokenUrls = {
+      twitter: 'https://api.twitter.com/2/oauth2/token',
+      linkedin: 'https://www.linkedin.com/oauth/v2/accessToken',
+      mastodon: `${this.config.mastodonInstance || 'https://mastodon.social'}/oauth/token`
+    };
 
-    return newToken;
+    const url = tokenUrls[platform];
+    if (!url) {
+      throw new Error(`Token refresh not supported for ${platform}`);
+    }
+
+    try {
+      let requestData;
+      let headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json'
+      };
+
+      if (platform === 'twitter') {
+        const clientCredentials = Buffer.from(`${this.config.twitter?.clientId}:${this.config.twitter?.clientSecret}`).toString('base64');
+        headers['Authorization'] = `Basic ${clientCredentials}`;
+        
+        requestData = new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken
+        });
+      } else if (platform === 'linkedin') {
+        requestData = new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken,
+          client_id: this.config.linkedin?.clientId,
+          client_secret: this.config.linkedin?.clientSecret
+        });
+      } else if (platform === 'mastodon') {
+        requestData = new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken,
+          client_id: this.config.mastodon?.clientId,
+          client_secret: this.config.mastodon?.clientSecret
+        });
+      }
+
+      const response = await axios.post(url, requestData, { headers });
+      
+      // Update stored tokens
+      this.tokens.set(platform, response.data.access_token);
+      if (response.data.refresh_token) {
+        this.refreshTokens.set(platform, response.data.refresh_token);
+      }
+      
+      // Update token expiry
+      if (response.data.expires_in) {
+        const expiryTime = Date.now() + (response.data.expires_in * 1000);
+        this.tokenExpiry.set(platform, expiryTime);
+      }
+
+      await this.saveTokens();
+      return response.data.access_token;
+    } catch (error) {
+      console.error(`Token refresh failed for ${platform}:`, error.response?.data || error.message);
+      throw new Error(`Failed to refresh token: ${error.response?.data?.error_description || error.message}`);
+    }
   }
 
   /**
    * Get access token for a platform
    */
-  getAccessToken(platform) {
+  async getAccessToken(platform) {
+    const token = this.tokens.get(platform);
+    if (!token) {
+      return null;
+    }
+
+    // Check if token is expired and refresh if needed
+    const expiry = this.tokenExpiry.get(platform);
+    if (expiry && Date.now() >= expiry - 300000) { // Refresh 5 minutes before expiry
+      try {
+        console.log(`Token for ${platform} is expiring soon, refreshing...`);
+        return await this.refreshAccessToken(platform);
+      } catch (error) {
+        console.warn(`Failed to refresh token for ${platform}:`, error.message);
+        return token; // Return existing token as fallback
+      }
+    }
+
+    return token;
+  }
+
+  /**
+   * Get access token synchronously (without refresh)
+   */
+  getAccessTokenSync(platform) {
     return this.tokens.get(platform);
   }
 
@@ -369,34 +507,154 @@ export class AuthManager {
   }
 
   /**
+   * Generate PKCE code verifier
+   */
+  generateCodeVerifier() {
+    return crypto.randomBytes(32).toString('base64url');
+  }
+
+  /**
    * Generate PKCE code challenge for Twitter OAuth2
    */
-  generateCodeChallenge() {
-    const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  generateCodeChallenge(codeVerifier) {
+    if (!codeVerifier) {
+      codeVerifier = this.generateCodeVerifier();
+    }
+    
     const codeChallenge = crypto
       .createHash('sha256')
       .update(codeVerifier)
       .digest('base64url');
     
-    return codeChallenge;
+    return { codeChallenge, codeVerifier };
   }
 
   /**
-   * Load stored tokens (in real implementation, this would use secure storage)
+   * Load stored tokens from secure storage
    */
   async loadStoredTokens() {
-    // Mock implementation - in real app, load from secure storage
-    // this.tokens = new Map(JSON.parse(localStorage.getItem('crosspost_tokens') || '[]'));
-    // this.refreshTokens = new Map(JSON.parse(localStorage.getItem('crosspost_refresh_tokens') || '[]'));
+    try {
+      await fs.mkdir(this.storageDir, { recursive: true });
+      
+      const tokenFile = path.join(this.storageDir, 'tokens.json');
+      const refreshTokenFile = path.join(this.storageDir, 'refresh-tokens.json');
+      const expiryFile = path.join(this.storageDir, 'token-expiry.json');
+
+      try {
+        const tokensData = await fs.readFile(tokenFile, 'utf8');
+        const decryptedTokens = this.decrypt(tokensData);
+        this.tokens = new Map(JSON.parse(decryptedTokens));
+      } catch (error) {
+        // File doesn't exist or can't be read, start with empty tokens
+        this.tokens = new Map();
+      }
+
+      try {
+        const refreshTokensData = await fs.readFile(refreshTokenFile, 'utf8');
+        const decryptedRefreshTokens = this.decrypt(refreshTokensData);
+        this.refreshTokens = new Map(JSON.parse(decryptedRefreshTokens));
+      } catch (error) {
+        this.refreshTokens = new Map();
+      }
+
+      try {
+        const expiryData = await fs.readFile(expiryFile, 'utf8');
+        this.tokenExpiry = new Map(JSON.parse(expiryData));
+      } catch (error) {
+        this.tokenExpiry = new Map();
+      }
+    } catch (error) {
+      console.warn('Failed to load stored tokens:', error.message);
+      this.tokens = new Map();
+      this.refreshTokens = new Map();
+      this.tokenExpiry = new Map();
+    }
   }
 
   /**
-   * Save tokens to storage
+   * Save tokens to secure storage
    */
   async saveTokens() {
-    // Mock implementation - in real app, save to secure storage
-    // localStorage.setItem('crosspost_tokens', JSON.stringify([...this.tokens]));
-    // localStorage.setItem('crosspost_refresh_tokens', JSON.stringify([...this.refreshTokens]));
+    try {
+      await fs.mkdir(this.storageDir, { recursive: true });
+      
+      const tokenFile = path.join(this.storageDir, 'tokens.json');
+      const refreshTokenFile = path.join(this.storageDir, 'refresh-tokens.json');
+      const expiryFile = path.join(this.storageDir, 'token-expiry.json');
+
+      // Encrypt and save tokens
+      const tokensJson = JSON.stringify([...this.tokens]);
+      const encryptedTokens = this.encrypt(tokensJson);
+      await fs.writeFile(tokenFile, encryptedTokens, 'utf8');
+
+      // Encrypt and save refresh tokens
+      const refreshTokensJson = JSON.stringify([...this.refreshTokens]);
+      const encryptedRefreshTokens = this.encrypt(refreshTokensJson);
+      await fs.writeFile(refreshTokenFile, encryptedRefreshTokens, 'utf8');
+
+      // Save token expiry (not encrypted as it's not sensitive)
+      const expiryJson = JSON.stringify([...this.tokenExpiry]);
+      await fs.writeFile(expiryFile, expiryJson, 'utf8');
+    } catch (error) {
+      console.error('Failed to save tokens:', error.message);
+      throw new Error('Failed to save authentication tokens');
+    }
+  }
+
+  /**
+   * Encrypt sensitive data
+   */
+  encrypt(text) {
+    const algorithm = 'aes-256-gcm';
+    const key = this.getEncryptionKey();
+    const iv = crypto.randomBytes(16);
+    
+    const cipher = crypto.createCipher(algorithm, key);
+    cipher.setAAD(Buffer.from('crosspost-plugin'));
+    
+    let encrypted = cipher.update(text, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    
+    const authTag = cipher.getAuthTag();
+    
+    return JSON.stringify({
+      iv: iv.toString('hex'),
+      encrypted,
+      authTag: authTag.toString('hex')
+    });
+  }
+
+  /**
+   * Decrypt sensitive data
+   */
+  decrypt(encryptedData) {
+    const algorithm = 'aes-256-gcm';
+    const key = this.getEncryptionKey();
+    const data = JSON.parse(encryptedData);
+    
+    const decipher = crypto.createDecipher(algorithm, key);
+    decipher.setAAD(Buffer.from('crosspost-plugin'));
+    decipher.setAuthTag(Buffer.from(data.authTag, 'hex'));
+    
+    let decrypted = decipher.update(data.encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    
+    return decrypted;
+  }
+
+  /**
+   * Get encryption key from config or environment
+   */
+  getEncryptionKey() {
+    const key = this.config.encryptionKey || 
+                process.env.CROSSPOST_ENCRYPTION_KEY || 
+                'default-key-change-in-production';
+    
+    if (key === 'default-key-change-in-production') {
+      console.warn('Using default encryption key. Set CROSSPOST_ENCRYPTION_KEY environment variable for production.');
+    }
+    
+    return crypto.createHash('sha256').update(key).digest();
   }
 
   /**

@@ -79,15 +79,19 @@ describe('Crosspost Plugin', () => {
     await plugin.initialize();
     
     const scheduledTime = new Date(Date.now() + 3600000); // 1 hour from now
+    const content = {
+      text: 'Scheduled content',
+      hashtags: ['test']
+    };
     const result = await plugin.schedulePost(
-      'Scheduled content',
+      content,
       ['twitter'],
       scheduledTime
     );
     
     assert.strictEqual(result.success, true);
     assert.ok(result.scheduleId);
-    assert.strictEqual(result.scheduledTime, scheduledTime);
+    assert.deepStrictEqual(result.scheduledTime, scheduledTime);
   });
 
   test('should cleanup resources on destroy', async () => {

@@ -4,12 +4,18 @@
  */
 
 import axios from 'axios';
+import { RateLimiter } from './rate-limiter.js';
+import { MediaUploader } from './media-uploader.js';
 
 export class CrosspostClient {
   constructor(config) {
     this.config = config;
     this.platformClients = new Map();
+    this.rateLimiter = new RateLimiter();
+    this.mediaUploader = new MediaUploader(config);
     this.isInitialized = false;
+    this.retryAttempts = config.maxRetries || 3;
+    this.retryDelay = config.retryDelay || 1000;
   }
 
   async initialize() {
@@ -73,24 +79,74 @@ export class CrosspostClient {
       throw new Error(`Unsupported platform: ${platform}`);
     }
 
-    try {
-      switch (platform) {
-        case 'twitter':
-          return await this.postToTwitter(content, options);
-        case 'linkedin':
-          return await this.postToLinkedIn(content, options);
-        case 'facebook':
-          return await this.postToFacebook(content, options);
-        case 'instagram':
-          return await this.postToInstagram(content, options);
-        case 'mastodon':
-          return await this.postToMastodon(content, options);
-        default:
-          throw new Error(`Platform ${platform} not implemented`);
+    // Check rate limits
+    await this.rateLimiter.waitForReset(platform, 'posts');
+
+    let lastError;
+    for (let attempt = 1; attempt <= this.retryAttempts; attempt++) {
+      try {
+        // Record the request for rate limiting
+        await this.rateLimiter.recordRequest(platform, 'posts');
+
+        let result;
+        switch (platform) {
+          case 'twitter':
+            result = await this.postToTwitter(content, options);
+            break;
+          case 'linkedin':
+            result = await this.postToLinkedIn(content, options);
+            break;
+          case 'facebook':
+            result = await this.postToFacebook(content, options);
+            break;
+          case 'instagram':
+            result = await this.postToInstagram(content, options);
+            break;
+          case 'mastodon':
+            result = await this.postToMastodon(content, options);
+            break;
+          default:
+            throw new Error(`Platform ${platform} not implemented`);
+        }
+
+        return result;
+      } catch (error) {
+        lastError = error;
+        console.warn(`Attempt ${attempt}/${this.retryAttempts} failed for ${platform}:`, error.message);
+
+        // Don't retry for certain errors
+        if (this.isNonRetryableError(error)) {
+          throw error;
+        }
+
+        // Wait before retrying (exponential backoff)
+        if (attempt < this.retryAttempts) {
+          const delay = this.retryDelay * Math.pow(2, attempt - 1);
+          console.log(`Retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
       }
-    } catch (error) {
-      throw new Error(`Failed to post to ${platform}: ${error.message}`);
     }
+
+    throw new Error(`Failed to post to ${platform} after ${this.retryAttempts} attempts: ${lastError.message}`);
+  }
+
+  /**
+   * Check if error should not be retried
+   */
+  isNonRetryableError(error) {
+    const nonRetryableMessages = [
+      'invalid credentials',
+      'unauthorized',
+      'forbidden',
+      'not found',
+      'duplicate',
+      'invalid media',
+      'content too long'
+    ];
+
+    const message = error.message.toLowerCase();
+    return nonRetryableMessages.some(msg => message.includes(msg));
   }
 
   /**
@@ -104,34 +160,59 @@ export class CrosspostClient {
       throw new Error('Twitter access token required');
     }
 
-    const payload = {
-      text: content.text
-    };
+    try {
+      const payload = {
+        text: content.text
+      };
 
-    // Add media if present
-    if (content.media && content.media.length > 0) {
-      // First upload media
-      const mediaIds = await this.uploadTwitterMedia(content.media, accessToken);
-      payload.media = { media_ids: mediaIds };
-    }
-
-    const response = await axios.post(
-      `${client.baseURL}/tweets`,
-      payload,
-      {
-        headers: {
-          ...client.headers,
-          'Authorization': `Bearer ${accessToken}`
-        }
+      // Add media if present
+      if (content.media && content.media.length > 0) {
+        await this.rateLimiter.waitForReset('twitter', 'uploads');
+        await this.rateLimiter.recordRequest('twitter', 'uploads');
+        
+        const uploadedMedia = await this.mediaUploader.uploadMedia('twitter', content.media, accessToken);
+        payload.media = { 
+          media_ids: uploadedMedia.map(media => media.mediaId) 
+        };
       }
-    );
 
-    return {
-      platform: 'twitter',
-      postId: response.data.data.id,
-      url: `https://twitter.com/user/status/${response.data.data.id}`,
-      response: response.data
-    };
+      // Add poll if present
+      if (content.poll) {
+        payload.poll = {
+          options: content.poll.options,
+          duration_minutes: content.poll.duration || 1440 // 24 hours default
+        };
+      }
+
+      // Add reply settings
+      if (options.reply_settings) {
+        payload.reply_settings = options.reply_settings;
+      }
+
+      const response = await axios.post(
+        `${client.baseURL}/tweets`,
+        payload,
+        {
+          headers: {
+            ...client.headers,
+            'Authorization': `Bearer ${accessToken}`
+          },
+          timeout: this.config.timeout || 30000
+        }
+      );
+
+      return {
+        platform: 'twitter',
+        postId: response.data.data.id,
+        url: `https://twitter.com/user/status/${response.data.data.id}`,
+        response: response.data
+      };
+    } catch (error) {
+      const errorMessage = error.response?.data?.errors?.[0]?.message || 
+                          error.response?.data?.detail || 
+                          error.message;
+      throw new Error(`Twitter API error: ${errorMessage}`);
+    }
   }
 
   /**

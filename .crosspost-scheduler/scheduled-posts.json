@@ -1,0 +1,25 @@
+[
+  {
+    "id": "schedule_1759329121828_xumowh0kf",
+    "content": {
+      "text": "Scheduled integration test post",
+      "hashtags": [
+        "scheduled",
+        "test"
+      ]
+    },
+    "platforms": [
+      "twitter",
+      "linkedin"
+    ],
+    "scheduledTime": "2025-10-01T15:32:01.827Z",
+    "options": {
+      "timezone": "UTC",
+      "priority": "normal"
+    },
+    "status": "scheduled",
+    "createdAt": "2025-10-01T14:32:01.828Z",
+    "attempts": 0,
+    "maxAttempts": 3
+  }
+]
