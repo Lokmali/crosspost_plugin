@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Crosspost Plugin Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        button { padding: 10px 15px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 3px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Simple Crosspost Plugin Test</h1>
+    
+    <div class="test-section">
+        <h2>1. Remote Entry Test</h2>
+        <button onclick="testRemoteEntry()">Test Remote Entry</button>
+        <div id="remote-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>2. Global Variable Test</h2>
+        <button onclick="testGlobalVariable()">Test Global Variable</button>
+        <div id="global-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>3. Client Creation Test</h2>
+        <button onclick="testClientCreation()">Test Client Creation</button>
+        <div id="client-result"></div>
+    </div>
+
+    <script>
+        let client = null;
+
+        // Test if remoteEntry.js loads
+        async function testRemoteEntry() {
+            const result = document.getElementById('remote-result');
+            result.innerHTML = '<div class="info">Loading remoteEntry.js...</div>';
+            
+            try {
+                const response = await fetch('http://localhost:3999/remoteEntry.js');
+                if (response.ok) {
+                    result.innerHTML = '<div class="success">✅ Remote entry loaded successfully!</div>';
+                } else {
+                    result.innerHTML = '<div class="error">❌ Failed to load remote entry</div>';
+                }
+            } catch (error) {
+                result.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        // Test global variable after loading script
+        async function testGlobalVariable() {
+            const result = document.getElementById('global-result');
+            result.innerHTML = '<div class="info">Loading script and checking global...</div>';
+            
+            try {
+                // Load the script
+                const script = document.createElement('script');
+                script.src = 'http://localhost:3999/remoteEntry.js';
+                script.onload = () => {
+                    // Check for global variables
+                    const globals = Object.keys(window).filter(key => key.includes('crosspost') || key.includes('webpack'));
+                    result.innerHTML = `
+                        <div class="success">✅ Script loaded!</div>
+                        <div class="info">Available globals: ${globals.join(', ')}</div>
+                    `;
+                };
+                script.onerror = () => {
+                    result.innerHTML = '<div class="error">❌ Failed to load script</div>';
+                };
+                document.head.appendChild(script);
+            } catch (error) {
+                result.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        // Test client creation
+        async function testClientCreation() {
+            const result = document.getElementById('client-result');
+            result.innerHTML = '<div class="info">Testing client creation...</div>';
+            
+            try {
+                // First load the script if not already loaded
+                if (!document.querySelector('script[src*="remoteEntry.js"]')) {
+                    const script = document.createElement('script');
+                    script.src = 'http://localhost:3999/remoteEntry.js';
+                    await new Promise((resolve, reject) => {
+                        script.onload = resolve;
+                        script.onerror = reject;
+                        document.head.appendChild(script);
+                    });
+                }
+
+                // Wait a bit for initialization
+                await new Promise(resolve => setTimeout(resolve, 500));
+
+                // Check what's available on window
+                const availableGlobals = Object.keys(window).filter(key => 
+                    key.includes('crosspost') || 
+                    key.includes('webpack') || 
+                    key.includes('__webpack')
+                );
+
+                result.innerHTML = `
+                    <div class="info">Available globals: ${availableGlobals.join(', ')}</div>
+                    <div class="info">Window keys: ${Object.keys(window).slice(0, 10).join(', ')}...</div>
+                `;
+
+                // Try to find the client
+                if (window.crosspostPlugin) {
+                    result.innerHTML += '<div class="success">✅ Found crosspostPlugin global!</div>';
+                } else {
+                    result.innerHTML += '<div class="error">❌ crosspostPlugin global not found</div>';
+                }
+
+            } catch (error) {
+                result.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        // Auto-run tests on load
+        window.onload = () => {
+            testRemoteEntry();
+        };
+    </script>
+</body>
+</html>

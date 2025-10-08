@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Direct Import Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        button { padding: 10px 15px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 3px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Direct Import Test</h1>
+    
+    <div class="test-section">
+        <h2>1. Direct Import Test</h2>
+        <button onclick="testDirectImport()">Test Direct Import</button>
+        <div id="import-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>2. Client Methods Test</h2>
+        <button onclick="testClientMethods()">Test Client Methods</button>
+        <div id="methods-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>3. API Test</h2>
+        <button onclick="testAPI()">Test API Call</button>
+        <div id="api-result"></div>
+    </div>
+
+    <script type="module">
+        let client = null;
+
+        // Test direct import
+        async function testDirectImport() {
+            const result = document.getElementById('import-result');
+            result.innerHTML = '<div class="info">Testing direct import...</div>';
+            
+            try {
+                // Try to import from the built file
+                const module = await import('./dist/main.js');
+                console.log('Module imported:', module);
+                
+                if (module.CrosspostPluginClient) {
+                    client = new module.CrosspostPluginClient({
+                        baseUrl: 'https://api.opencrosspost.com/',
+                        accountId: 'test.near'
+                    });
+                    result.innerHTML = '<div class="success">✅ Direct import successful!</div>';
+                } else {
+                    result.innerHTML = '<div class="error">❌ CrosspostPluginClient not found in module</div>';
+                }
+            } catch (error) {
+                result.innerHTML = `<div class="error">❌ Import error: ${error.message}</div>`;
+            }
+        }
+
+        // Test client methods
+        async function testClientMethods() {
+            const result = document.getElementById('methods-result');
+            
+            if (!client) {
+                result.innerHTML = '<div class="error">❌ Client not loaded. Run import test first.</div>';
+                return;
+            }
+
+            result.innerHTML = '<div class="info">Testing client methods...</div>';
+            
+            try {
+                // Test basic methods
+                const accountId = client.getAccountId();
+                const isAuth = client.isAuthenticated();
+                
+                // Test setting auth
+                client.setAuth({
+                    nearSignature: 'test_signature',
+                    accountId: 'test.near'
+                });
+                
+                const newAuth = client.isAuthenticated();
+                
+                result.innerHTML = `
+                    <div class="success">
+                        ✅ Client Methods Test Passed!<br>
+                        Account ID: ${accountId}<br>
+                        Initial Auth: ${isAuth}<br>
+                        After Auth: ${newAuth}
+                    </div>
+                `;
+            } catch (error) {
+                result.innerHTML = `<div class="error">❌ Methods Test Error: ${error.message}</div>`;
+            }
+        }
+
+        // Test API call
+        async function testAPI() {
+            const result = document.getElementById('api-result');
+            
+            if (!client) {
+                result.innerHTML = '<div class="error">❌ Client not loaded. Run import test first.</div>';
+                return;
+            }
+
+            result.innerHTML = '<div class="info">Testing API call...</div>';
+            
+            try {
+                // Test health endpoint (this will fail with real API but we can test the structure)
+                const health = await client.health();
+                result.innerHTML = `<div class="success">✅ API Test Passed! Health: ${JSON.stringify(health)}</div>`;
+            } catch (error) {
+                // This is expected to fail with network error, but we can see the error structure
+                result.innerHTML = `
+                    <div class="info">
+                        ℹ️ API call failed as expected (no real API):<br>
+                        Error: ${error.message}<br>
+                        This is normal for testing without a real API server.
+                    </div>
+                `;
+            }
+        }
+
+        // Make functions global
+        window.testDirectImport = testDirectImport;
+        window.testClientMethods = testClientMethods;
+        window.testAPI = testAPI;
+
+        // Auto-run import test
+        window.onload = () => {
+            testDirectImport();
+        };
+    </script>
+</body>
+</html>

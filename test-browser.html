@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crosspost Plugin Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        button { padding: 10px 15px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 3px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Crosspost Plugin Test</h1>
+    
+    <div class="test-section">
+        <h2>1. Module Federation Test</h2>
+        <button onclick="testModuleFederation()">Test MF Loading</button>
+        <div id="mf-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>2. Direct Import Test</h2>
+        <button onclick="testDirectImport()">Test Direct Import</button>
+        <div id="direct-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>3. API Methods Test</h2>
+        <button onclick="testAPIMethods()">Test API Methods</button>
+        <div id="api-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>4. Media Handling Test</h2>
+        <input type="file" id="mediaFile" accept="image/*" />
+        <button onclick="testMediaHandling()">Test Media Normalization</button>
+        <div id="media-result"></div>
+    </div>
+
+    <script>
+        let client = null;
+
+        // Test Module Federation loading
+        async function testModuleFederation() {
+            const result = document.getElementById('mf-result');
+            result.innerHTML = '<div class="info">Loading...</div>';
+            
+            try {
+                // Load the remoteEntry.js script
+                const script = document.createElement('script');
+                script.src = 'http://localhost:3999/remoteEntry.js';
+                script.onload = async () => {
+                    try {
+                        // Wait a bit for the script to initialize
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                        
+                        // Check if the global is available
+                        if (window.crosspostPlugin) {
+                            const { CrosspostPluginClient } = window.crosspostPlugin;
+                            client = new CrosspostPluginClient({
+                                baseUrl: 'https://api.opencrosspost.com/',
+                                accountId: 'test.near'
+                            });
+                            result.innerHTML = '<div class="success">✅ Module Federation loaded successfully!</div>';
+                        } else {
+                            result.innerHTML = '<div class="error">❌ Global crosspostPlugin not found</div>';
+                        }
+                    } catch (error) {
+                        result.innerHTML = `<div class="error">❌ MF Error: ${error.message}</div>`;
+                    }
+                };
+                script.onerror = () => {
+                    result.innerHTML = '<div class="error">❌ Failed to load remoteEntry.js</div>';
+                };
+                document.head.appendChild(script);
+            } catch (error) {
+                result.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        // Test direct import (if available)
+        async function testDirectImport() {
+            const result = document.getElementById('direct-result');
+            result.innerHTML = '<div class="info">Testing direct import...</div>';
+            
+            try {
+                // This would work if we had a proper build
+                result.innerHTML = '<div class="info">ℹ️ Direct import requires proper build setup</div>';
+            } catch (error) {
+                result.innerHTML = `<div class="error">❌ Direct import error: ${error.message}</div>`;
+            }
+        }
+
+        // Test API methods
+        async function testAPIMethods() {
+            const result = document.getElementById('api-result');
+            
+            if (!client) {
+                result.innerHTML = '<div class="error">❌ Client not loaded. Run Module Federation test first.</div>';
+                return;
+            }
+
+            result.innerHTML = '<div class="info">Testing API methods...</div>';
+            
+            try {
+                // Test basic methods
+                const accountId = client.getAccountId();
+                const isAuth = client.isAuthenticated();
+                
+                // Test setting auth
+                client.setAuth({
+                    nearSignature: 'test_signature',
+                    accountId: 'test.near'
+                });
+                
+                const newAuth = client.isAuthenticated();
+                
+                result.innerHTML = `
+                    <div class="success">
+                        ✅ API Methods Test Passed!<br>
+                        Account ID: ${accountId}<br>
+                        Initial Auth: ${isAuth}<br>
+                        After Auth: ${newAuth}
+                    </div>
+                `;
+            } catch (error) {
+                result.innerHTML = `<div class="error">❌ API Test Error: ${error.message}</div>`;
+            }
+        }
+
+        // Test media handling
+        async function testMediaHandling() {
+            const result = document.getElementById('media-result');
+            const fileInput = document.getElementById('mediaFile');
+            
+            if (!client) {
+                result.innerHTML = '<div class="error">❌ Client not loaded. Run Module Federation test first.</div>';
+                return;
+            }
+
+            if (!fileInput.files[0]) {
+                result.innerHTML = '<div class="error">❌ Please select a file first.</div>';
+                return;
+            }
+
+            result.innerHTML = '<div class="info">Testing media normalization...</div>';
+            
+            try {
+                const file = fileInput.files[0];
+                const normalized = await client.normalizeMedia(file, {
+                    maxSize: 5 * 1024 * 1024, // 5MB
+                    allowedTypes: ['image/jpeg', 'image/png', 'image/gif']
+                });
+                
+                result.innerHTML = `
+                    <div class="success">
+                        ✅ Media Normalization Success!<br>
+                        Type: ${normalized.type}<br>
+                        Size: ${normalized.size} bytes<br>
+                        MIME: ${normalized.mimeType}<br>
+                        Has Thumbnail: ${normalized.thumbnail ? 'Yes' : 'No'}
+                    </div>
+                `;
+            } catch (error) {
+                result.innerHTML = `<div class="error">❌ Media Test Error: ${error.message}</div>`;
+            }
+        }
+
+        // Auto-run Module Federation test on load
+        window.onload = () => {
+            testModuleFederation();
+        };
+    </script>
+</body>
+</html>
